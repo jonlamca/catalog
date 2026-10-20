@@ -1,0 +1,32 @@
+# Tests the core module on every pipeline; on the default branch, publishes the Catalog Editor to GitLab Pages.
+# The site is static files: no build, only the yaml library copied next to it.
+#
+# CI/CD variables:
+#   GITLAB_OAUTH_CLIENT_ID  the OAuth application's ID (not secret). Create a group or instance application:
+#                           Confidential: unticked (PKCE, no secret) · Scopes: api · Redirect URI: <Pages URL>/
+#                           Without it the editor still opens, but cannot sign in, load or save.
+#   BACKSTAGE_ORG_GROUP     optional: the `group` of Backstage's GitLab org provider, which it strips from group
+#                           entity names; the editor strips it too, from owners and from names made from the slug.
+#   NODE_IMAGE              optional: a Node 22 image from an internal registry mirror
+variables:
+  NODE_IMAGE: node:22
+image: $NODE_IMAGE
+
+test:
+  stage: test
+  script:
+    - cd catalog-editor && npm ci && npm test
+
+pages:
+  stage: deploy
+  script:
+    - (cd catalog-editor && npm ci && npm run vendor)
+    - mkdir -p public && cp catalog-editor/index.html catalog-editor/app.js catalog-editor/catalog.js catalog-editor/catalog-editor.js catalog-editor/gitlab.js public/
+    - cp -R catalog-editor/vendor public/vendor
+    - printf '{"url":"%s","clientId":"%s","orgGroup":"%s"}' "$CI_SERVER_URL" "$GITLAB_OAUTH_CLIENT_ID" "$BACKSTAGE_ORG_GROUP" > public/config.json
+    # The token never leaves for another host: connect-src narrows from any https: to this GitLab
+    - sed -i "s#connect-src 'self' https:#connect-src 'self' $CI_SERVER_URL#" public/index.html
+  artifacts:
+    paths: [public]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

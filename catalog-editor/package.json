@@ -1,0 +1,14 @@
+{
+  "name": "catalog-editor",
+  "description": "Register a repository in the Backstage software catalog: a catalog-info.yaml editor with GitLab sign-in",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "vendor": "rm -rf vendor && mkdir -p vendor && cp -R node_modules/yaml/browser/dist vendor/yaml",
+    "test": "node catalog.test.js",
+    "start": "npm run vendor && python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

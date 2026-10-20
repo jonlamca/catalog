@@ -1,0 +1,5 @@
+node_modules/
+catalog-editor/vendor/
+catalog-editor/config.json
+public/
+.DS_Store
