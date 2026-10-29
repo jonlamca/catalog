@@ -21,6 +21,16 @@ export function gitlab(url, token) {
     }
     return res.status === 204 ? null : res.json()
   }
+  async function graphql(query, variables) {
+    const res = await fetch(`${url}/api/graphql`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || body.errors?.length) throw new Error(`GitLab: ${body.errors?.[0]?.message ?? res.statusText} (${res.status})`)
+    return body.data
+  }
   const p = id => `/projects/${enc(id)}`
   return {
     req,
@@ -43,6 +53,36 @@ export function gitlab(url, token) {
     groups: (q = '') => req(`/groups?all_available=true&per_page=50&order_by=similarity&search=${enc(q)}`),
     users: (q = '') => req(`/users?active=true&per_page=20&search=${enc(q)}`),
     topics: (q = '') => req(`/topics?per_page=50&search=${enc(q)}`),
+
+    /**
+     * Every project in a group and its subgroups (or, with no group, the projects you are a member of), with the
+     * text of catalog-info.yaml on its default branch, or null. One GraphQL request per page of projects; a page
+     * shrinks when GitLab finds the query too complex. Archived projects are left out. onProgress(count) as it goes.
+     */
+    async catalogFiles(group, onProgress) {
+      const projects = group
+        ? 'group(fullPath: $group) { projects(includeSubgroups: true, first: $first, after: $after) { ...page } }'
+        : 'projects(membership: true, first: $first, after: $after) { ...page }'
+      const query = `query(${group ? '$group: ID!, ' : ''}$first: Int!, $after: String) { ${projects} }
+        fragment page on ProjectConnection {
+          pageInfo { hasNextPage endCursor }
+          nodes { fullPath name webUrl archived repository { blobs(paths: ["catalog-info.yaml"]) { nodes { rawTextBlob } } } }
+        }`
+      const out = []
+      for (let after = null, first = 50; ;) {
+        let data
+        try { data = await graphql(query, { first, after, ...(group && { group }) }) }
+        catch (e) { if (/complexity/i.test(e.message) && first > 5) { first = Math.ceil(first / 2); continue } throw e }
+        const page = group ? data.group?.projects : data.projects
+        if (!page) throw new Error(`GitLab: no group ${group}, or you cannot see it`)
+        for (const n of page.nodes) {
+          if (!n.archived) out.push({ path: n.fullPath, name: n.name, url: n.webUrl, text: n.repository?.blobs?.nodes?.[0]?.rawTextBlob ?? null })
+        }
+        onProgress?.(out.length)
+        if (!page.pageInfo.hasNextPage) return out
+        after = page.pageInfo.endCursor
+      }
+    },
   }
 }
 
@@ -69,21 +109,22 @@ export function lookups(gl, project, orgGroup = '') {
 }
 
 // ---------------------------------------------------------------- browser sign-in (PKCE)
-// cfg: { url, clientId }. The redirect URI is this page's folder address; register it on the OAuth application.
+// cfg: { url, clientId }. The redirect URI is the site's folder address, for every page: register it on the OAuth
+// application. GitLab returns there, and the sign-in then goes back to the page it started from.
 const KEY = { tokens: 'catalog-editor:tokens', pkce: 'catalog-editor:pkce' }
 const store = {
   get: k => { try { return JSON.parse(sessionStorage.getItem(k) ?? 'null') } catch { return null } },
   set: (k, v) => sessionStorage.setItem(k, JSON.stringify(v)),
   del: k => sessionStorage.removeItem(k),
 }
-const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, '')
+const redirectUri = () => location.origin + location.pathname.replace(/[^/]*$/, '')
 const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const random = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)))
 const sha256 = async s => b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))))
 
 export async function signIn(cfg) {
   const verifier = random(48), state = random(16)
-  store.set(KEY.pkce, { verifier, state, hash: location.hash })
+  store.set(KEY.pkce, { verifier, state, back: location.pathname + location.hash })
   location.assign(`${cfg.url}/oauth/authorize?${new URLSearchParams({
     client_id: cfg.clientId, redirect_uri: redirectUri(), response_type: 'code', scope: 'api', state,
     code_challenge: await sha256(verifier), code_challenge_method: 'S256',
@@ -96,10 +137,13 @@ export async function completeSignIn(cfg) {
   const code = q.get('code'), pkce = store.get(KEY.pkce)
   if (!code && !q.get('error')) return
   store.del(KEY.pkce)
-  history.replaceState(null, '', location.pathname + (pkce?.hash ?? ''))
+  const back = pkce?.back ?? location.pathname
+  history.replaceState(null, '', location.pathname + (back.split('#')[1] ? `#${back.split('#')[1]}` : ''))
   if (q.get('error')) throw new Error(`GitLab sign-in: ${q.get('error_description') ?? q.get('error')}`)
   if (!pkce || q.get('state') !== pkce.state) return // a forged or stale redirect
   await tokenRequest(cfg, { grant_type: 'authorization_code', code, redirect_uri: redirectUri(), code_verifier: pkce.verifier })
+  // Signed in. If it started on another page of the site, go back there; this page stops here.
+  if (back.split('#')[0] !== location.pathname) { location.replace(back); await new Promise(() => {}) }
 }
 
 async function tokenRequest(cfg, params) {

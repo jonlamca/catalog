@@ -1,28 +1,30 @@
 // Backstage catalog descriptor (catalog-info.yaml): the schema, YAML in and out, and a lightweight validator.
-// No DOM and no GitLab: the same module serves the web editor, a VS Code extension (webview or host) and CI.
+// No DOM, no GitLab, no dependencies: the same module serves the web editor, a VS Code extension (webview or host) and CI.
 // Source: https://backstage.io/docs/features/software-catalog/descriptor-format/
 //
 // The schema is the repository-level profile: what a product owner registers in their own repository. In the
 // Developer Portal's architecture, each repository's catalog-info.yaml names its owner, type, lifecycle and
 // IT product. So: Components (and the APIs they expose), owned by a GitLab group or user, part of an IT product.
-// IT products (System) come from ITPD, teams and people (Group, User) from GitLab; other kinds and fields are
-// managed centrally. The editor keeps whatever else is in a file, and the validator flags it.
-import { Document, isMap, parseAllDocuments } from 'yaml'
+// IT products (System) come from the IT product registry, teams and people (Group, User) from GitLab; other
+// kinds and fields are managed centrally. The editor keeps whatever else is in a file, and the validator flags it.
+import { Doc, fromJS, parseAll } from './yaml.js'
+
+export { stringify } from './yaml.js'
 
 // ---------------------------------------------------------------- schema
 // control: text | textarea | select (a dropdown of `options`, plus Other… for your own value) | combo (one value,
 //          suggestions) | list (many values, suggestions) | map (key/value) | links | definition
 // Suggestions come from `options` (hardcoded), `source` (a lookup the host provides, e.g. GitLab) and
 // `ref` (entities of those kinds declared in the same file). `ref.default` is the kind a bare name refers to.
-// The hardcoded values are Backstage's well-known ones, plus what fits EDP's toolchain (Python, R, npm, Quarto;
-// support through BMC Helix and Teams). Every one of them can be overridden by typing.
+// The hardcoded values are Backstage's well-known ones, plus common ones for a Python, R and JavaScript toolchain.
+// Every one of them can be overridden by typing.
 export const LIFECYCLES = ['experimental', 'production', 'deprecated']
 export const COMPONENT_TYPES = ['service', 'website', 'library', 'data-pipeline', 'tool', 'documentation']
 export const API_TYPES = ['openapi', 'asyncapi', 'graphql', 'grpc']
 export const TAGS = ['python', 'r', 'javascript', 'typescript', 'java', 'dotnet', 'sas', 'sql', 'quarto', 'shiny',
   'fastapi', 'django', 'flask', 'react', 'angular', 'spring-boot', 'spark', 'docker', 'kubernetes']
 export const DEFINITIONS = ['./openapi.yaml', './openapi.json', './asyncapi.yaml', './schema.graphql', './api.proto']
-export const LINK_TITLES = ['Support (BMC Helix)', 'Teams channel', 'Runbook', 'Dashboard', 'Documentation', 'Issue tracker', 'Release notes']
+export const LINK_TITLES = ['Support', 'Chat channel', 'Runbook', 'Dashboard', 'Documentation', 'Issue tracker', 'Release notes']
 export const LINK_TYPES = ['support', 'chat', 'runbook', 'dashboard', 'documentation', 'issues']
 export const LINK_ICONS = ['help', 'chat', 'docs', 'dashboard', 'email', 'warning']   // closed: an icon shows only if the portal has it
 export const ANNOTATIONS = ['backstage.io/techdocs-ref', 'gitlab.com/project-slug']
@@ -37,10 +39,10 @@ const lifecycle = {
   path: 'spec.lifecycle', label: 'Lifecycle', control: 'select', options: LIFECYCLES, required: true,
   help: 'experimental: early or trial; do not rely on it.\nproduction: in use and maintained.\ndeprecated: being retired; move off it.',
 }
-// ponytail: free text until the ITPD entity provider exists and ITPD read access is confirmed; then a 'product' lookup
+// ponytail: free text until the catalog has a source of IT products to look up; then a 'product' lookup
 const product = {
-  path: 'spec.system', label: 'IT product', control: 'combo', placeholder: 'the IT product (ITPD) name', ref: { kinds: ['System'], default: 'System' },
-  help: 'The IT product, registered in ITPD, that this belongs to (every application has one). The portal lists a product’s repositories together.',
+  path: 'spec.system', label: 'IT product', control: 'combo', placeholder: 'the IT product name', ref: { kinds: ['System'], default: 'System' },
+  help: 'The IT product this belongs to, as named in the IT product registry. The portal lists a product’s repositories together.',
 }
 
 export const KIND_HELP = 'Component: software this repository builds. API: an interface a component exposes. Most repositories have one Component, plus one API per interface they publish.'
@@ -87,7 +89,7 @@ export const KINDS = {
 }
 
 /** Where entities of the kinds a repository does not register come from (the validator's hint) */
-export const ELSEWHERE = { System: 'IT products come from ITPD', Group: 'teams come from GitLab', User: 'people come from GitLab' }
+export const ELSEWHERE = { System: 'IT products come from the IT product registry', Group: 'teams come from GitLab', User: 'people come from GitLab' }
 
 /**
  * A catalog name from a GitLab path: group/sub/project → group-sub-project, minus the org group prefix when set.
@@ -104,31 +106,25 @@ export const fieldsFor = kind => [...METADATA, ...(KINDS[kind]?.spec ?? [])]
 export const split = path => path.split('.')
 
 // ---------------------------------------------------------------- YAML
-/** A file to yaml Documents (one per entity). Edit them with doc.setIn/deleteIn: comments and order survive. */
-export function parse(text) {
-  return parseAllDocuments(text ?? '').filter(d => d.contents !== null || d.errors.length)
-}
-
-export function stringify(docs) {
-  return docs.map((d, i) => { if (i) d.directives.docStart = true; return String(d) }).join('')
-}
+/** A file to Docs (one per entity). Edit them with doc.set/delete/rename: comments and order survive. */
+export const parse = text => parseAll(text)
 
 /** A new entity of this kind, with its required spec fields seeded. */
 export function newEntity(kind = 'Component', metadata = {}, spec = {}) {
   const def = KINDS[kind]
-  return new Document({ apiVersion: def?.apiVersion ?? V1, kind, metadata: { name: '', ...metadata }, spec: { ...def?.seed, ...spec } })
+  return new Doc(fromJS({ apiVersion: def?.apiVersion ?? V1, kind, metadata: { name: '', ...metadata }, spec: { ...def?.seed, ...spec } }))
 }
 
 /** Change an entity's kind: keep every field, fix a default apiVersion, seed the new kind's required fields
  *  where they are missing or hold a value the new kind's list does not have (a Component's type on an API). */
 export function setKind(doc, kind) {
-  const before = KINDS[doc.get('kind')], def = KINDS[kind]
-  doc.set('kind', kind)
-  if (!doc.get('apiVersion') || doc.get('apiVersion') === before?.apiVersion) doc.set('apiVersion', def?.apiVersion ?? V1)
-  if (!isMap(doc.get('spec'))) doc.set('spec', doc.createNode({}))
+  const before = KINDS[doc.get(['kind'])], def = KINDS[kind]
+  doc.set(['kind'], kind)
+  if (!doc.get(['apiVersion']) || doc.get(['apiVersion']) === before?.apiVersion) doc.set(['apiVersion'], def?.apiVersion ?? V1)
+  if (doc.node(['spec'])?.kind !== 'map') doc.set(['spec'], {})
   for (const [k, v] of Object.entries(def?.seed ?? {})) {
-    const cur = doc.getIn(['spec', k]), f = def.spec.find(f => f.path === `spec.${k}`)
-    if (!cur || (f?.control === 'select' && !f.options.includes(cur))) doc.setIn(['spec', k], doc.createNode(v))
+    const cur = doc.get(['spec', k]), f = def.spec.find(f => f.path === `spec.${k}`)
+    if (!cur || (f?.control === 'select' && !f.options.includes(cur))) doc.set(['spec', k], v)
   }
 }
 
@@ -235,7 +231,7 @@ export function validate(e) {
 export function validateAll(docs) {
   const issues = [], seen = new Map()
   docs.forEach((d, entity) => {
-    if (d.errors.length) return d.errors.forEach(e => issues.push({ entity, path: '', message: e.message.split('\n')[0], level: 'error' }))
+    if (d.errors.length) return d.errors.forEach(e => issues.push({ entity, path: '', message: e.message, level: 'error' }))
     const e = d.toJS()
     issues.push(...validate(e).map(i => ({ entity, ...i })))
     const id = [e?.kind, e?.metadata?.namespace ?? 'default', e?.metadata?.name].join(':').toLowerCase()
@@ -243,4 +239,24 @@ export function validateAll(docs) {
     else seen.set(id, entity)
   })
   return issues
+}
+
+// ---------------------------------------------------------------- registry
+/**
+ * The registry of a set of projects [{ path, name, url, text }] (text: catalog-info.yaml, or null for none):
+ * every entity they register (valid: false when it has errors), the projects that register nothing, and every error.
+ */
+export function registry(projects) {
+  const out = { entities: [], unregistered: [], errors: [] }
+  for (const project of projects) {
+    if (!project.text?.trim()) { out.unregistered.push(project); continue }
+    const docs = parse(project.text)
+    const errors = validateAll(docs).filter(i => i.level === 'error')
+    out.errors.push(...errors.map(issue => ({ project, issue })))
+    docs.forEach((d, k) => {
+      const entity = d.errors.length ? null : d.toJS()
+      if (isObj(entity)) out.entities.push({ project, entity, valid: !errors.some(i => i.entity === k) })
+    })
+  }
+  return out
 }

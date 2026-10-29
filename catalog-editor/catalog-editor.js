@@ -5,7 +5,6 @@
 //   el.lookup = async (source, query) => [{ value, label? }]   optional dropdown data for 'owner' | 'tag'
 //   el.defaults = { name, … }   optional metadata for entities added with + Entity (the host's project slug name)
 // Theme: --ce-* custom properties, falling back to VS Code's theme variables, then to system colours.
-import { isCollection, isMap, isScalar, isSeq } from 'yaml'
 import { ELSEWHERE, KIND_HELP, KINDS, LINK_ICONS, LINK_TITLES, LINK_TYPES, METADATA, fieldsFor, newEntity, parse, setKind, split, stringify, validateAll } from './catalog.js'
 
 const css = `
@@ -69,7 +68,7 @@ function h(tag, props = {}, ...children) {
 }
 const str = v => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
 const OTHER = '\u0000other'   // the Other… option of an editable dropdown
-const entityLabel = d => `${d.get('kind') ?? '?'} · ${d.getIn(['metadata', 'name']) || 'unnamed'}`
+const entityLabel = d => `${d.get(['kind']) ?? '?'} · ${d.get(['metadata', 'name']) || 'unnamed'}`
 
 export class CatalogEditor extends HTMLElement {
   #docs = []
@@ -98,23 +97,24 @@ export class CatalogEditor extends HTMLElement {
   get #doc() { return this.#docs[this.#i] }
 
   // ---------------------------------------------------------------- reading and writing the YAML document
-  #get(path) { const v = this.#doc.getIn(path); return v?.toJSON ? v.toJSON() : v }
-  #node(path) { return this.#doc.getIn(path, true) }
+  #get(path) { return this.#doc.get(path) }
 
-  #set(path, v) {
+  #set(path, v) { this.#doc.set(path, v); this.#changed() }
+
+  #clear(path) {
     const d = this.#doc
-    if (v === undefined || v === '') {
-      d.deleteIn(path)
-      // drop mappings the delete left empty (spec.profile), never metadata or spec, never a list item
-      for (let k = path.length - 1; k > 1 && typeof path[k - 1] === 'string'; k--) {
-        const n = d.getIn(path.slice(0, k), true)
-        if (isMap(n) && !n.items.length) d.deleteIn(path.slice(0, k)); else break
-      }
-    } else {
-      for (let k = 1; k < path.length; k++) if (!isCollection(d.getIn(path.slice(0, k), true))) d.setIn(path.slice(0, k), d.createNode({}))
-      d.setIn(path, typeof v === 'object' ? d.createNode(v) : v)
+    d.delete(path)
+    // drop mappings the delete left empty ({ $text }), never metadata or spec, never a list item
+    for (let k = path.length - 1; k > 1 && typeof path[k - 1] === 'string'; k--) {
+      const n = d.node(path.slice(0, k))
+      if (n?.kind === 'map' && !n.pairs.length) d.delete(path.slice(0, k)); else break
     }
     this.#changed()
+  }
+
+  // Typing keeps the key in its place: an emptied field is "" until you leave it, and only then is it removed
+  #typing(path, after) {
+    return { oninput: e => { this.#set(path, e.target.value); after?.(e) }, onchange: e => { if (!e.target.value) this.#clear(path) } }
   }
 
   #changed() {
@@ -146,9 +146,9 @@ export class CatalogEditor extends HTMLElement {
       }, entityLabel(d))),
       h('button', { type: 'button', onclick: () => { this.#docs.push(newEntity('Component', this.defaults)); this.#i = this.#docs.length - 1; this.#restructured() } }, '+ Entity'))
     if (!this.#doc) return [nav, h('p', { className: 'muted' }, 'No entities in this file yet.')]
-    if (!isMap(this.#doc.contents)) return [nav, h('p', { className: 'banner' }, 'This entity is not a mapping: fix it in the YAML.')]
+    if (this.#doc.root?.kind !== 'map') return [nav, h('p', { className: 'banner' }, 'This entity is not a mapping: fix it in the YAML.')]
 
-    const kind = this.#doc.get('kind')
+    const kind = this.#doc.get(['kind'])
     const def = KINDS[kind]
     const fields = fieldsFor(kind)
     return [
@@ -200,34 +200,35 @@ export class CatalogEditor extends HTMLElement {
     const suggest = (f.options || f.ref || f.source) ? { list: `dl-${f.path}`, autocomplete: 'off', onfocus: e => this.#suggest(f, e.target) } : {}
     switch (f.control ?? 'text') {
       case 'textarea':
-        return h('textarea', { ...common, value: str(v), oninput: e => this.#set(path, e.target.value) })
+        return h('textarea', { ...common, value: str(v), ...this.#typing(path) })
       case 'select': {
         // A dropdown of reasonable values, and Other… for your own (a datalist would hide the rest once one is chosen)
         const cur = str(v), custom = cur !== '' && !f.options.includes(cur)
         const other = h('input', { value: custom ? cur : '', placeholder: `Your own ${f.label.toLowerCase()}`, hidden: !custom,
-          'data-key': `${f.path}.other`, 'aria-label': `${f.label}: your own value`, oninput: e => this.#set(path, e.target.value) })
+          'data-key': `${f.path}.other`, 'aria-label': `${f.label}: your own value`, ...this.#typing(path) })
         const select = h('select', {
           ...common,
           onchange: e => {
             other.hidden = e.target.value !== OTHER
-            if (other.hidden) this.#set(path, e.target.value); else { other.focus(); this.#set(path, other.value) }
+            if (!other.hidden) { other.focus(); if (other.value) this.#set(path, other.value) }   // the old value stays until you type
+            else if (e.target.value) this.#set(path, e.target.value); else this.#clear(path)
           },
         }, h('option', { value: '' }, '—'), f.options.map(o => h('option', { value: o, selected: o === cur }, o)), h('option', { value: OTHER, selected: custom }, 'Other…'))
         return h('div', { className: 'choice' }, select, other)
       }
       case 'combo':
         return h('input', { ...common, ...suggest, value: str(v), placeholder: f.placeholder ?? (f.ref?.default ? `${f.ref.default.toLowerCase()} name or kind:name` : ''),
-          oninput: e => { this.#set(path, e.target.value); this.#suggest(f, e.target) } })
+          ...this.#typing(path, e => this.#suggest(f, e.target)) })
       case 'list': return this.#list(f, path, v, common, suggest)
       case 'map': return this.#map(f, path, v, common)
       case 'links': return this.#links(f, path, v, common)
       case 'definition': {
-        if (typeof v === 'string') return h('textarea', { ...common, value: v, oninput: e => this.#set(path, e.target.value) })
+        if (typeof v === 'string') return h('textarea', { ...common, value: v, ...this.#typing(path) })
         const key = ['$text', '$json', '$yaml'].find(k => v?.[k] !== undefined) ?? '$text'
-        return h('input', { ...common, ...suggest, value: str(v?.[key]), placeholder: './openapi.yaml', oninput: e => this.#set([...path, key], e.target.value) })
+        return h('input', { ...common, ...suggest, value: str(v?.[key]), placeholder: './openapi.yaml', ...this.#typing([...path, key]) })
       }
       default:
-        return h('input', { ...common, value: str(v), placeholder: f.placeholder ?? '', oninput: e => this.#set(path, e.target.value) })
+        return h('input', { ...common, value: str(v), placeholder: f.placeholder ?? '', ...this.#typing(path) })
     }
   }
 
@@ -236,15 +237,14 @@ export class CatalogEditor extends HTMLElement {
     if (v !== undefined && v !== null && !Array.isArray(v)) return h('p', { className: 'muted', id: common.id }, 'Not a list: fix it in the YAML.')
     const items = v ?? []
     const remove = i => {
-      const seq = this.#node(path)
-      seq.delete(i)
-      if (!seq.items.length && !f.required) this.#doc.deleteIn(path)
+      this.#doc.delete([...path, i])
+      if (!this.#doc.get(path)?.length && !f.required) this.#doc.delete(path)
       this.#restructured()
     }
     return h('div', { className: 'rows' },
       items.map((item, i) => h('div', { className: 'row' },
         h('input', { ...suggest, value: str(item), 'data-key': `${f.path}.${i}`, 'aria-label': `${f.label} ${i + 1}`,
-          oninput: e => { this.#node(path).set(i, e.target.value); this.#changed(); if (suggest.list) this.#suggest(f, e.target) },
+          oninput: e => { this.#doc.set([...path, i], e.target.value); this.#changed(); if (suggest.list) this.#suggest(f, e.target) },
           onchange: e => { if (!e.target.value) remove(i) } }),
         h('button', { type: 'button', className: 'x', 'aria-label': `Remove ${str(item)}`, onclick: () => remove(i) }, '×'))),
       h('input', { ...common, ...suggest, 'data-key': `${f.path}.${items.length}`, placeholder: items.length ? 'Add another…' : 'Add…',
@@ -252,9 +252,9 @@ export class CatalogEditor extends HTMLElement {
         onchange: e => {
           const value = e.target.value.trim()
           if (!value) return
-          const seq = this.#node(path)
           const typing = this.shadowRoot.activeElement === e.target
-          if (isSeq(seq)) { seq.add(value); this.#restructured() } else { this.#set(path, [value]); this.#render() }
+          this.#doc.set([...path, items.length], value)
+          this.#restructured()
           if (typing) this.#focus(`${f.path}.${items.length + 1}`)
         } }))
   }
@@ -262,31 +262,29 @@ export class CatalogEditor extends HTMLElement {
   // A mapping (annotations, labels): key and value per row, and a blank row at the end that adds a pair
   #map(f, path, v, common) {
     if (v !== undefined && v !== null && (typeof v !== 'object' || Array.isArray(v))) return h('p', { className: 'muted', id: common.id }, 'Not a mapping: fix it in the YAML.')
-    const node = this.#node(path)
-    const entries = isMap(node) ? node.items.map(p => [str(isScalar(p.key) ? p.key.value : p.key), isScalar(p.value) ? p.value.value : p.value?.toJSON?.() ?? p.value]) : []
+    const entries = this.#doc.entries(path)
     const keyList = f.options ? { list: `dl-${f.path}`, autocomplete: 'off' } : {}
-    const pair = i => this.#node(path).items[i]
     const taken = k => entries.some(([key]) => key === k)
+    const remove = k => { this.#doc.delete([...path, k]); if (!this.#doc.entries(path).length) this.#doc.delete(path); this.#restructured() }
     const rows = entries.map(([k, val], i) => h('div', { className: 'row' },
       h('input', { ...keyList, className: 'key', value: k, 'data-key': `${f.path}.${i}.k`, 'aria-label': `${f.label} key ${i + 1}`,
         onchange: e => {
           const key = e.target.value.trim()
-          if (!key) { this.#node(path).items.splice(i, 1); this.#restructured(); return }
+          if (!key) return remove(k)
           if (key !== k && taken(key)) { e.target.value = k; return }     // keys are unique
-          pair(i).key = this.#doc.createNode(key)
+          this.#doc.rename([...path, k], key)
           this.#restructured()
         } }),
       h('input', { value: str(val), 'data-key': `${f.path}.${i}.v`, 'aria-label': `${f.label} value for ${k}`, list: f.values?.[k] ? `dl-${f.path}=${k}` : null,
-        oninput: e => { const p = pair(i); if (isScalar(p.value)) p.value.value = e.target.value; else p.value = this.#doc.createNode(e.target.value); this.#changed() } }),
-      h('button', { type: 'button', className: 'x', 'aria-label': `Remove ${k}`, onclick: () => { this.#node(path).items.splice(i, 1); if (!this.#node(path).items.length) this.#doc.deleteIn(path); this.#restructured() } }, '×')))
+        oninput: e => { this.#doc.set([...path, k], e.target.value); this.#changed() } }),
+      h('button', { type: 'button', className: 'x', 'aria-label': `Remove ${k}`, onclick: () => remove(k) }, '×')))
     const n = entries.length
     const value = h('input', { 'data-key': `${f.path}.${n}.v`, placeholder: 'value', 'aria-label': `New ${f.label} value` })
     const key = h('input', { ...common, ...keyList, className: 'key', 'data-key': `${f.path}.${n}.k`, placeholder: 'Add a key…',
       onchange: e => {
         const k = e.target.value.trim()
         if (!k || taken(k)) return
-        const map = this.#node(path)
-        if (isMap(map)) map.set(k, value.value); else this.#set(path, { [k]: value.value })
+        this.#doc.set([...path, k], value.value)
         this.#restructured()
       } })
     return h('div', { className: 'rows' }, rows, h('div', { className: 'row' }, key, value, h('span', { className: 'x pad' })),
@@ -297,10 +295,10 @@ export class CatalogEditor extends HTMLElement {
     if (v !== undefined && v !== null && !Array.isArray(v)) return h('p', { className: 'muted', id: common.id }, 'Not a list: fix it in the YAML.')
     const links = v ?? []
     const input = (i, k, placeholder, list) => h('input', { value: str(links[i]?.[k]), placeholder, list, 'data-key': `${f.path}.${i}.${k}`, 'aria-label': `Link ${i + 1} ${k}`,
-      oninput: e => this.#set([...path, i, k], e.target.value) })
-    const icon = i => h('select', { 'data-key': `${f.path}.${i}.icon`, 'aria-label': `Link ${i + 1} icon`, onchange: e => this.#set([...path, i, 'icon'], e.target.value) },
+      ...this.#typing([...path, i, k]) })
+    const icon = i => h('select', { 'data-key': `${f.path}.${i}.icon`, 'aria-label': `Link ${i + 1} icon`, onchange: e => (e.target.value ? this.#set([...path, i, 'icon'], e.target.value) : this.#clear([...path, i, 'icon'])) },
       h('option', { value: '' }, 'icon'), [...new Set([...LINK_ICONS, ...(links[i]?.icon ? [str(links[i].icon)] : [])])].map(o => h('option', { value: o, selected: o === links[i]?.icon }, o)))
-    const remove = i => { const seq = this.#node(path); seq.delete(i); if (!seq.items.length) this.#doc.deleteIn(path); this.#restructured() }
+    const remove = i => { this.#doc.delete([...path, i]); if (!this.#doc.get(path)?.length) this.#doc.delete(path); this.#restructured() }
     return h('div', { className: 'rows' },
       links.map((_, i) => h('div', { className: 'row' }, input(i, 'url', 'https://…'), input(i, 'title', 'title', 'dl-link-title'), icon(i), input(i, 'type', 'type', 'dl-link-type'),
         h('button', { type: 'button', className: 'x', 'aria-label': `Remove link ${i + 1}`, onclick: () => remove(i) }, '×'))),
@@ -308,8 +306,7 @@ export class CatalogEditor extends HTMLElement {
         onchange: e => {
           const url = e.target.value.trim()
           if (!url) return
-          const seq = this.#node(path)
-          if (isSeq(seq)) seq.add(this.#doc.createNode({ url })); else this.#set(path, [{ url }])
+          this.#doc.set([...path, links.length], { url })
           this.#restructured()
         } }),
       h('datalist', { id: 'dl-link-title' }, LINK_TITLES.map(x => new Option('', x))),
@@ -322,7 +319,7 @@ export class CatalogEditor extends HTMLElement {
     const out = (f.options ?? []).map(value => ({ value }))
     if (f.ref) {
       for (const d of this.#docs) {
-        const k = d.get('kind'), name = d.getIn(['metadata', 'name']), ns = d.getIn(['metadata', 'namespace'])
+        const k = d.get(['kind']), name = d.get(['metadata', 'name']), ns = d.get(['metadata', 'namespace'])
         if (d === this.#doc || !name || !f.ref.kinds.includes(k)) continue
         out.push({ value: `${k === f.ref.default ? '' : `${k.toLowerCase()}:`}${ns && ns !== 'default' ? `${ns}/` : ''}${name}`, label: `${k} in this file` })
       }

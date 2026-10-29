@@ -3,29 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- The token never leaves for another host: the pages job narrows connect-src to the GitLab URL.
-     The sha256 is the import map below; after changing it: printf %s "<map>" | openssl dgst -sha256 -binary | base64 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MFwq/BIvHqFwu3yrRFwzLP+NRWOsSCwgGK3+WJUYyRo='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:; base-uri 'self'; form-action 'none'">
+<!-- The token never leaves for another host: the pages job narrows connect-src to the GitLab URL. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:; base-uri 'self'; form-action 'none'">
 <title>Catalog Editor</title>
-<script type="importmap">{"imports":{"yaml":"./vendor/yaml/index.js"}}</script>
 <script type="module" src="app.js"></script>
+<link rel="stylesheet" href="site.css">
 <style>
-  :root { color-scheme: light dark; --bg: #fff; --fg: #1b1f24; --muted: #59636e; --line: #d0d7de; --panel: #f6f8fa; --accent: #1a5a96; --error: #b3261e; --ok: #1a7f37; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --panel: #151b23; --accent: #4493f8; --error: #f85149; --ok: #3fb950; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
-  header { display: flex; align-items: center; gap: 1rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  h1 { font-size: 1.05rem; margin: 0; flex: 1; }
-  h1 small { font-weight: normal; color: var(--muted); margin-left: .4rem; }
-  button { font: inherit; padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: inherit; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .5; cursor: default; }
-  input, select, textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: .35rem .5rem; }
-  label { display: grid; gap: .2rem; font-size: .9rem; }
-  .bar { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; padding: .75rem 1rem; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .bar label { min-width: min(24rem, 100%); }
-  #status { color: var(--muted); margin: 0; padding: .5rem 1rem 0; }
-  #status:empty { display: none; }
   main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1.5rem; padding: 1rem; max-width: 110rem; }
   @media (width < 60rem) { main { grid-template-columns: minmax(0, 1fr); } }
   catalog-editor { --ce-accent: var(--accent); --ce-line: var(--line); --ce-field: var(--bg); --ce-muted: var(--muted); --ce-error: var(--error); }
@@ -37,14 +20,12 @@
   form h2 { font-size: 1rem; margin: 0; }
   form .check { display: flex; gap: .5rem; align-items: center; }
   #result { font-size: .9rem; }
-  #result a { color: var(--accent); }
-  .ok { color: var(--ok); } .error { color: var(--error); }
-  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <header>
   <h1>Catalog Editor <small>catalog-info.yaml for the Developer Portal (Backstage)</small></h1>
+  <nav aria-label="Pages"><a href="./" aria-current="page">Editor</a><a href="registry.html">Registry</a></nav>
   <span id="who"></span>
   <button id="signin" hidden>Sign in with GitLab</button>
   <button id="signout" hidden>Sign out</button>

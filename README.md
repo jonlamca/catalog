@@ -21,7 +21,7 @@ The form covers the repository-level profile: what a product owner registers in 
 | **API**: an interface the component exposes | type, lifecycle, owner, IT product, definition |
 | **Both** | name, title, description, tags, links, annotations |
 
-Other kinds come from elsewhere: IT products (`System`) come from ITPD, and teams and people (`Group`, `User`) come from GitLab. If a file contains them, they are kept unchanged and flagged as warnings.
+Other kinds come from elsewhere: IT products (`System`) come from the IT product registry, and teams and people (`Group`, `User`) come from GitLab. If a file contains them, they are kept unchanged and flagged as warnings.
 
 Every field has a note beside it explaining it. The dropdowns are editable:
 
@@ -46,35 +46,62 @@ Group names follow Backstage's GitLab org provider (`defaultGroupNameTransformer
 
 Errors block saving; warnings (anything outside the profile) don't. The validator has no DOM or GitLab dependency, so it can also run in CI.
 
-### Run it locally
+## Catalog Registry
+
+`registry.html` lists what every repository in a GitLab group registers. It reads each project's `catalog-info.yaml` live from GitLab, as the signed-in user, so everyone sees only the projects GitLab lets them see. There's no server and no service token.
+
+- **Scope.** The group in `config.json` (`orgGroup`), or any group typed on the page. An empty group means the projects you're a member of. `registry.html#group/path` links straight to a group.
+- **Three views:**
+  - **Registered:** every entity, filterable by kind, type, lifecycle, owner and IT product, and searchable. Invalid entities carry an "errors" badge.
+  - **Not registered:** projects with no `catalog-info.yaml`, each with a link to register it in the editor.
+  - **With errors:** each problem, with a link to fix it.
+- **How it reads.** One GitLab GraphQL request per page of up to 50 projects returns each project's file from its default branch. The page gets smaller if GitLab finds the query too complex. Archived projects are left out. Results are kept for the browser session; **Refresh** reads again.
+
+Both pages share one sign-in and one OAuth redirect URI: the site's folder.
+
+## No dependencies
+
+Nothing is installed from a package registry, at build time or at run time. The site is the files in `catalog-editor/`, served as they are. YAML is read and written by `yaml.js`, which covers what descriptor files use:
+- block mappings and lists;
+- plain, quoted and block (`|` `>`) text;
+- `[ ]` and `{ }` collections;
+- several documents separated by `---`;
+- comments and blank lines, which edits keep.
+
+Anchors, aliases, tags and complex keys are reported as errors with a line number, never guessed. Plain values resolve as in YAML 1.2, like Backstage's own reader.
+
+## Run it locally
+
+Node runs the test; any static file server runs the site:
 
 ```bash
 cd catalog-editor
-npm install
-npm test
-npm start
+node catalog.test.js
+python3 -m http.server 8080
 ```
 
-`npm start` serves the editor on http://localhost:8080. Without `config.json` you can edit and copy YAML, but not sign in. To sign in, register `http://localhost:8080/` as a redirect URI on a GitLab OAuth application (not confidential, scope `api`). Then create `catalog-editor/config.json`:
+The editor is then on http://localhost:8080, and the registry on http://localhost:8080/registry.html. Without `config.json` you can edit and copy YAML, but not sign in. To sign in, register `http://localhost:8080/` as a redirect URI on a GitLab OAuth application (not confidential, scope `api`). Then create `catalog-editor/config.json`:
 
 ```json
 { "url": "https://gitlab.example.com", "clientId": "<application ID>", "orgGroup": "" }
 ```
 
-### Deploy
+## Deploy
 
 `.gitlab-ci.yml` publishes the editor to GitLab Pages on the default branch. It needs `GITLAB_OAUTH_CLIENT_ID`, and the OAuth application must have `<Pages URL>/` as a redirect URI; the pipeline file's header describes every variable. The page's Content-Security-Policy lets the token go only to that GitLab.
 
-### Reuse in a VS Code extension
+## Reuse in a VS Code extension
 
-The logic is plain ES modules, with `yaml` as the only dependency:
+The logic is plain ES modules with no dependencies:
 
 | File | What it is | Runs in |
 |---|---|---|
-| `catalog.js` | the schema, YAML in and out (comments kept), validator, `nameFromSlug()` | anywhere: webview, extension host, Node, CI |
+| `catalog.js` | the schema, validator, `nameFromSlug()` | anywhere: webview, extension host, Node, CI |
+| `yaml.js` | YAML in and out, keeping comments and order: `parseAll()`, `stringify()`, `Doc` | anywhere |
 | `catalog-editor.js` | the `<catalog-editor>` web component | any page or webview |
 | `gitlab.js` | `gitlab(url, token)` REST client and `lookups()` for the dropdowns; PKCE sign-in for browsers | anywhere with `fetch`; sign-in in a browser only |
-| `app.js`, `index.html` | this site: sign-in, project and branch picking, saving | browser |
+| `app.js`, `index.html` | the editor page: sign-in, project and branch picking, saving | browser |
+| `registry.js`, `registry.html` | the registry page; `registry()` in `catalog.js` builds what it lists | browser |
 
 The component's host contract:
 
@@ -87,3 +114,7 @@ editor.defaults = { name }                         // metadata for entities adde
 ```
 
 Theming uses `--ce-*` custom properties, which fall back to VS Code's theme variables.
+
+## License
+
+[MIT](LICENSE)

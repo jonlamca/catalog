@@ -1,5 +1,5 @@
-# Tests the core module on every pipeline; on the default branch, publishes the Catalog Editor to GitLab Pages.
-# The site is static files: no build, only the yaml library copied next to it.
+# Tests the core module on every pipeline; on the default branch, publishes the Catalog Editor and Registry to GitLab Pages.
+# The site is static files with no dependencies: nothing to install or build.
 #
 # CI/CD variables:
 #   GITLAB_OAUTH_CLIENT_ID  the OAuth application's ID (not secret). Create a group or instance application:
@@ -15,17 +15,15 @@ image: $NODE_IMAGE
 test:
   stage: test
   script:
-    - cd catalog-editor && npm ci && npm test
+    - node catalog-editor/catalog.test.js
 
 pages:
   stage: deploy
   script:
-    - (cd catalog-editor && npm ci && npm run vendor)
-    - mkdir -p public && cp catalog-editor/index.html catalog-editor/app.js catalog-editor/catalog.js catalog-editor/catalog-editor.js catalog-editor/gitlab.js public/
-    - cp -R catalog-editor/vendor public/vendor
+    - mkdir -p public && cp catalog-editor/*.html catalog-editor/*.css catalog-editor/*.js public/ && rm public/catalog.test.js
     - printf '{"url":"%s","clientId":"%s","orgGroup":"%s"}' "$CI_SERVER_URL" "$GITLAB_OAUTH_CLIENT_ID" "$BACKSTAGE_ORG_GROUP" > public/config.json
     # The token never leaves for another host: connect-src narrows from any https: to this GitLab
-    - sed -i "s#connect-src 'self' https:#connect-src 'self' $CI_SERVER_URL#" public/index.html
+    - sed -i "s#connect-src 'self' https:#connect-src 'self' $CI_SERVER_URL#" public/*.html
   artifacts:
     paths: [public]
   rules:

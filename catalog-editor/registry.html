@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The token never leaves for another host: the pages job narrows connect-src to the GitLab URL. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:; base-uri 'self'; form-action 'none'">
+<title>Catalog Registry</title>
+<script type="module" src="registry.js"></script>
+<link rel="stylesheet" href="site.css">
+<style>
+  main { padding: 1rem; max-width: 110rem; }
+  .filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
+  .filters .search { flex: 1; min-width: min(18rem, 100%); }
+  #count { color: var(--muted); font-size: .9rem; margin: .75rem 0 .5rem; }
+  .table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td .sub, td .desc { color: var(--muted); font-size: .85em; }
+  td .desc { max-width: 36rem; }
+  .badge { font-size: .75rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--error); color: var(--error); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Catalog Registry <small>what each repository registers in the Developer Portal</small></h1>
+  <nav aria-label="Pages"><a href="./">Editor</a><a href="registry.html" aria-current="page">Registry</a></nav>
+  <span id="who"></span>
+  <button id="signin" hidden>Sign in with GitLab</button>
+  <button id="signout" hidden>Sign out</button>
+</header>
+<form class="bar" id="scope" hidden>
+  <label>GitLab group
+    <input id="group" list="groups" placeholder="Empty: the projects you are a member of" autocomplete="off">
+  </label>
+  <datalist id="groups"></datalist>
+  <button class="primary">Show</button>
+  <button type="button" id="refresh">Refresh</button>
+</form>
+<p id="status" role="status"></p>
+<main id="main" hidden>
+  <div class="filters" id="filters">
+    <label>Show
+      <select id="view">
+        <option value="entities">Registered</option>
+        <option value="unregistered">Not registered</option>
+        <option value="errors">With errors</option>
+      </select>
+    </label>
+    <label class="search">Search <input id="q" type="search" placeholder="Name, description, owner, tag, repository…"></label>
+  </div>
+  <p id="count" aria-live="polite"></p>
+  <div class="table"><table><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+</main>
+</body>
+</html>
