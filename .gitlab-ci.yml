@@ -1,29 +1,12 @@
-# Tests the core module on every pipeline; on the default branch, publishes the Catalog Editor and Registry to GitLab Pages.
-# The site is static files with no dependencies: nothing to install or build.
-#
+# GitLab Pages: the Catalog Editor and Registry, as they are (static files, nothing to build).
 # CI/CD variables:
-#   GITLAB_OAUTH_CLIENT_ID  the OAuth application's ID (not secret). Create a group or instance application:
-#                           Confidential: unticked (PKCE, no secret) · Scopes: api · Redirect URI: <Pages URL>/
-#                           Without it the editor still opens, but cannot sign in, load or save.
-#   BACKSTAGE_ORG_GROUP     optional: the `group` of Backstage's GitLab org provider, which it strips from group
-#                           entity names; the editor strips it too, from owners and from names made from the slug.
-#   NODE_IMAGE              optional: a Node 22 image from an internal registry mirror
-variables:
-  NODE_IMAGE: node:22
-image: $NODE_IMAGE
-
-test:
-  stage: test
-  script:
-    - node catalog-editor/catalog.test.js
-
+#   GITLAB_OAUTH_CLIENT_ID  the OAuth application's ID: not confidential, scope api, redirect URI <Pages URL>/
+#   BACKSTAGE_ORG_GROUP     optional: the group the registry lists, and the prefix Backstage strips from group names
 pages:
-  stage: deploy
   script:
-    - mkdir -p public && cp catalog-editor/*.html catalog-editor/*.css catalog-editor/*.js public/ && rm public/catalog.test.js
+    - mkdir public && cp catalog-editor/*.html catalog-editor/*.css catalog-editor/*.js public/ && rm public/catalog.test.js
     - printf '{"url":"%s","clientId":"%s","orgGroup":"%s"}' "$CI_SERVER_URL" "$GITLAB_OAUTH_CLIENT_ID" "$BACKSTAGE_ORG_GROUP" > public/config.json
-    # The token never leaves for another host: connect-src narrows from any https: to this GitLab
-    - sed -i "s#connect-src 'self' https:#connect-src 'self' $CI_SERVER_URL#" public/*.html
+    - sed -i "s#connect-src 'self' https:#connect-src 'self' $CI_SERVER_URL#" public/*.html   # the token goes only to this GitLab
   artifacts:
     paths: [public]
   rules:

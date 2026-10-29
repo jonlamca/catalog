@@ -88,7 +88,7 @@ The editor is then on http://localhost:8080, and the registry on http://localhos
 
 ## Deploy
 
-`.gitlab-ci.yml` publishes the editor to GitLab Pages on the default branch. It needs `GITLAB_OAUTH_CLIENT_ID`, and the OAuth application must have `<Pages URL>/` as a redirect URI; the pipeline file's header describes every variable. The page's Content-Security-Policy lets the token go only to that GitLab.
+`.gitlab-ci.yml` is a single `pages` job: on the default branch it publishes both pages to GitLab Pages, with nothing to install or build. Set `GITLAB_OAUTH_CLIENT_ID`, and give the OAuth application `<Pages URL>/` as its redirect URI. The pages' Content-Security-Policy lets the token go only to that GitLab. Who can open the site is the project's Pages access setting (Settings → General → Visibility).
 
 ## Reuse in a VS Code extension
 
